@@ -1,4 +1,24 @@
+"""12306 query tool
+
+Usage:
+    tickets.py [-gdk] <date> <from> <to>
+
+Options:
+    -h         查看帮助
+    -d         动车
+    -g         高铁
+    -k         快速
+    -t         特快
+    -z         直达
+
+Example:
+    tickets.py 2017-10-10 北京 上海 
+    tickets.py -dg 2017-10-10 成都 南京
+"""
+
 import requests
+from colorama import init, Fore
+from docopt import docopt
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 from prettytable import PrettyTable
 from stations import stations
@@ -15,31 +35,46 @@ HEADER = '车次 车站 时间 历时 商务座 特等 一等 二等 软卧 硬�
 class TrainInfo:
     date = ''
 
-    def __init__(self, info, date):
+    def __init__(self, info, _from, _to, date):
         """
         初始化相应信息,并将车次相关信息转换为列表，便于使用prettytable打印输出
         """
         self.date = date
-        self.__no = info["train_no"]
-        self.__types = info["seat_types"]
-        self.__from_no = info["from_station_no"]
-        self.__to_no = info["to_station_no"]
+        self.__no = info[2]
+        self.__types = info[-1]
+        self.__from_no = info[16]
+        self.__to_no = info[17]
 
-        self.__code = info['station_train_code']
-        self.__from_station = info['from_station_name']
-        self.__to_station = info['to_station_name']
-        self.__start = info['start_time']
-        self.__arrive = info['arrive_time']
-        self.__period = info['lishi']
-        self.__seats = [info["swz_num"], info["tz_num"], info["zy_num"],
-                        info["ze_num"], info["rw_num"], info["yw_num"],
-                        info["rz_num"], info["yz_num"], info["wz_num"]]
+        self.__code = info[3]
+        self.__from_station = _from
+        self.__to_station = _to
+        self.__start = info[8]
+        self.__arrive = info[9]
+        self.__period = info[10]
+        self.__seats = [info[-3],       # 商务座
+                        info[-10],      # 特等座
+                        info[-4],       # 一等座
+                        info[-5],       # 二等座
+                        info[-12],      # 软卧
+                        info[-7],       # 硬卧
+                        info[-11],      # 软座
+                        info[-6],       # 硬座
+                        info[-9]]       # 无座
 
         self.__row = [self.__code,
-                      '\n'.join([self.__from_station, self.__to_station]),
-                      '\n'.join([self.__start, self.__arrive]),
+                      '\n'.join([Fore.GREEN + self.__from_station + Fore.RESET,
+                                 Fore.RED + self.__to_station + Fore.RESET]),
+                      '\n'.join([Fore.GREEN + self.__start + Fore.RESET,
+                                 Fore.RED + self.__arrive + Fore.RESET]),
                       self.__period]
         self.__row.extend(self.__seats)
+
+        # 使用绿色显示有票 用红色显示无票
+        for i in range(-9, 0):
+            if self.__row[i] not in ['无', '']:
+                self.__row[i] = Fore.GREEN + self.__row[i] + Fore.RESET
+            else:
+                self.__row[i] = Fore.RED + self.__row[i] + Fore.RESET
 
     def get_price_info(self):
         """
@@ -47,12 +82,13 @@ class TrainInfo:
         """
         url = PRICE_URL.format(self.__no, self.__from_no,
                                self.__to_no, self.__types, self.date)
-        prices = get_response(url)
-        l = ['A9', 'P', 'M', 'O', 'A4', 'A3', 'A2', 'A1', 'WZ']
-        for tag in l:
-            if prices.get(tag):
-                self.__row[l.index(tag)+4] = \
-                    '\n'.join([self.__row[l.index(tag)+4], prices.get(tag)])
+        prices = get_response(url).get('data')
+        if len(prices) != 0:
+            l = ['A9', 'P', 'M', 'O', 'A4', 'A3', 'A2', 'A1', 'WZ']
+            for tag in l:
+                if prices.get(tag):
+                    self.__row[l.index(tag) + 4] = \
+                        '\n'.join([self.__row[l.index(tag) + 4], prices.get(tag)])
 
     def get_row(self):
         return self.__row
@@ -64,14 +100,18 @@ def get_response(url):
     :param url: 目标url
     :return: 字典格式数据
     """
+    ret = ''
     try:
         requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
-        r = requests.get(url, verify=False)
+        r = requests.get(url, verify=False, timeout=15)
         r.raise_for_status()
-        info = r.json()['data']
-        return info
-    except Exception:
-        return ''
+        ret = r.json()
+    except requests.ConnectTimeout:
+        print("Request time out.")
+    except requests.ConnectionError:
+        print("Can not acquire response.")
+    finally:
+        return ret
 
 
 def make_info_url(date, from_station, to_station):
@@ -82,31 +122,70 @@ def make_info_url(date, from_station, to_station):
     :param to_station: 目的站
     :return: 要请求车次信息的url
     """
-    return INFO_URL.format(date, stations.get(from_station), stations.get(to_station))
+    return INFO_URL.format(date, from_station, to_station)
 
 
-def pretty_print(infos, date):
+def filter_train(options, info):
+    ret = True
+    if info[11] == 'Y':   # 过滤掉不能预订的车次信息
+        if len(options) == 0:
+            ret = False
+        else:             # 当输入短参数时过滤相应车型
+            for opt in options:
+                if info[3][0].lower() in opt:
+                    ret = False
+    return ret
+
+
+def pretty_print(options, infos, _from, _to, date):
     """
     输出车次信息
     """
     pt = PrettyTable(HEADER)
     for info in infos:
-        if info['queryLeftNewDTO']['canWebBuy'] != 'N':  # 过滤掉不能预订的车次信息
-            train = TrainInfo(info['queryLeftNewDTO'], date)
+        info = info.split('|')
+        if not filter_train(options, info):
+            train = TrainInfo(info, _from, _to, date)
             train.get_price_info()
             pt.add_row(train.get_row())
     print(pt)
 
 
+def analysis_response(res):
+    ret = None
+    if len(res.get('messages')) > 0:
+        # 当查询日期不在预售日期范围内时抛出异常
+        raise NameError(res.get('messages')[0])
+    elif len(res.get('data')) > 0:
+        ret = res.get('data').get('result')
+    return ret
+
+
 def main():
-    while True:
-        date = input('Date (eg.2017-05-01): ')
-        from_station = input('From_station: ')
-        to_station = input('To_station: ')
+    args = docopt(__doc__)
+    date = args['<date>']
+    from_station = stations.get(args['<from>'])
+    to_station = stations.get(args['<to>'])
+    options = [key for key, value in args.items() if value is True]
+
+    try:
+        if from_station is None or to_station is None:
+            raise ValueError("Wrong station name.")
         url = make_info_url(date, from_station, to_station)
-        infos = get_response(url)
-        pretty_print(infos, date)
-        print('\n\n\n\n\n')
+        res = analysis_response(get_response(url))
+        if res is not None:
+            pass
+            pretty_print(options, res, args['<from>'], args['<to>'], date)
+        else:
+            print("Can't acquire the information.Please try again later.")
+    except ValueError:
+        print("Please append right station's name.")
+        print("eg. tickets.py 2017-05-01 北京 上海")
+    except NameError:
+        print("选择的查询日期不在预售日期范围内.")
+        print("The selected query date is not within the pre-sale date range.")
+        print("Please append proper date.")
 
 
+init()
 main()
