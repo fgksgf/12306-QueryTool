@@ -85,15 +85,16 @@ class TrainInfo:
         """
         获得每种座位的价格信息
         """
-        url = PRICE_URL.format(self.__no, self.__from_no,
-                               self.__to_no, self.__types, self.date)
-        prices = get_response(url).get('data')
-        if len(prices) != 0:
-            lst = ['A9', 'M', 'O', 'A4', 'A3', 'A2', 'A1', 'WZ']
-            for tag in lst:
-                if prices.get(tag):
-                    self.__row[lst.index(tag) + 4] = \
-                        '\n'.join([self.__row[lst.index(tag) + 4], prices.get(tag)])
+        pass
+        # url = PRICE_URL.format(self.__no, self.__from_no,
+        #                        self.__to_no, self.__types, self.date)
+        # prices = get_response(url).get('data')
+        # if len(prices) != 0:
+        #     lst = ['A9', 'M', 'O', 'A4', 'A3', 'A2', 'A1', 'WZ']
+        #     for tag in lst:
+        #         if prices.get(tag):
+        #             self.__row[lst.index(tag) + 4] = \
+        #                 '\n'.join([self.__row[lst.index(tag) + 4], prices.get(tag)])
 
     def get_row(self):
         return self.__row
